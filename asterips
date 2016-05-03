@@ -1,0 +1,35 @@
+#!/bin/sh
+
+logdir=`echo $HOME | sed -n '1p'`
+ifaddr=`ifconfig eth0 | sed -n '2p' | awk -F : '{print $2}' | awk '{print $1}'`
+inface=`ifconfig eth0 | sed -n '1p' | awk '{print $1}'`
+
+# Keep a log of (l)users... easier to keep track of in
+# case they're legit and I have to reinstate them....
+
+tail -n 5000 /var/log/asterisk/messages |\
+awk '/Username\/auth/{print $7,$10}' |\
+grep "\." | sed 's/'\''//g' | sort -ru |\
+awk '{print "User(s) with authentication issues "$1" from "$2}' >> $logdir/auth.issues.log
+
+
+# Rinse and repeat... Now we block them... Note modified awk statement... This was
+# to ensure that no one injects something into Asterisk forcing the machine to do
+# something stupid like block itself...
+
+tail -n 5000 /var/log/asterisk/messages |\
+awk 'NF<=15&&($5=="Registration"||$9=="Failed")&&$14=="name"{print $11}' |\
+sed 's/'\''//g' | grep "\." | sort -ru | grep -vi [a-z] |\
+awk -vifaddr="$ifaddr" -vinface="$inface" '{print "iptables -A INPUT -s "$1" -i '$inface' -d '$ifaddr' -p IP -j REJECT"}'
+
+# Keep track of and block wrong password users...
+tail -n 1000 /var/log/asterisk/messages |\
+awk '/Registration/&&/Wrong password/{print $1,$2,$7,$10}' |\
+sed 's/'\''//g;s/@/ /g;s/<sip://g' |\
+awk '{print $1,$2,$3,$5}' >> $logdir/wrong.passwords.log
+
+# Rinse repeat... Now we block em
+tail -n 5000 /var/log/asterisk/messages |\
+awk 'NF<=15&&($5=="Registration"||$9=="Failed")&&$14=="name"{print $11}' |\
+sed 's/'\''//g' | grep "\." | sort -u | grep -vi [a-z] |\
+awk -vifaddr="$ifaddr" -vinface="$inface" '{print "iptables -A INPUT -s "$1" -i '$inface' -d '$ifaddr' -p IP -j REJECT"}'
